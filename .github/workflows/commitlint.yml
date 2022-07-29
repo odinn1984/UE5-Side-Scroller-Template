@@ -1,0 +1,13 @@
+name: Linter
+on: [pull_request]
+
+jobs:
+  CommitLinter:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 20
+      - uses: wagoid/commitlint-github-action@v1
