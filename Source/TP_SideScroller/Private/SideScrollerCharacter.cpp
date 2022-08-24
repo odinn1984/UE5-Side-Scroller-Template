@@ -5,7 +5,8 @@
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Components/CapsuleComponent.h"
-#include "Kismet/KismetSystemLibrary.h"
+#include "Engine/StaticMeshActor.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 ASideScrollerCharacter::ASideScrollerCharacter(const FObjectInitializer& ObjectInitializer)
@@ -17,7 +18,7 @@ ASideScrollerCharacter::ASideScrollerCharacter(const FObjectInitializer& ObjectI
   bUseControllerRotationPitch = false;
   bUseControllerRotationRoll = false;
 
-  JumpMaxHoldTime = 0.35f;
+  JumpMaxHoldTime = 0.0f;
   JumpMaxCount = 1;
   
   GetCharacterMovement()->bUseFlatBaseForFloorChecks = true;
@@ -28,8 +29,8 @@ ASideScrollerCharacter::ASideScrollerCharacter(const FObjectInitializer& ObjectI
   GetCharacterMovement()->MaxWalkSpeed = 1000.0f;
   GetCharacterMovement()->GravityScale = 3.0f;
   GetCharacterMovement()->AirControl = 1.0f;
-  GetCharacterMovement()->JumpZVelocity = 500.0f;
-  GetCharacterMovement()->GroundFriction = 50.0f;
+  GetCharacterMovement()->JumpZVelocity = 1250.0f;
+  GetCharacterMovement()->GroundFriction = 100.0f;
   GetCharacterMovement()->FallingLateralFriction = 1.0f;
   GetCharacterMovement()->MaxAcceleration = 8000.0f;
 
@@ -39,9 +40,7 @@ ASideScrollerCharacter::ASideScrollerCharacter(const FObjectInitializer& ObjectI
   WallDetectionBox->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
   WallDetectionBox->SetWorldLocation(FVector(25.0f, 0.0f, 0.0f));
   WallDetectionBox->SetBoxExtent(FVector(25.0, 25.0, 50.0f));
-  WallDetectionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-  WallDetectionBox->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
-  WallDetectionBox->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldStatic, ECollisionResponse::ECR_Overlap);
+  WallDetectionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
   InitCharacter();
 
@@ -53,38 +52,38 @@ void ASideScrollerCharacter::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
 
+  UpdateIsTouchingWall();
+
   if (GetVelocity().Z < 0)
   {
-    GetCharacterMovement()->GravityScale = OriginalGravityScale * FallingGravityScaleModifier;
-
     if (bCanWallSlide && bIsTouchingWall)
     {
-      GetCharacterMovement()->Velocity.Z = -WallSlideZVelocity;
+      bIsSlidingOnWall = true;
+
+      if (bWallJumpRequested)
+      {
+        bWallJumpRequested = false;
+        GetCharacterMovement()->Velocity.Z = 0.0f;
+      }
+      else
+      {
+        GetCharacterMovement()->Velocity.Z = -250.0f;
+      }
     }
-  }
-  else
-  {
-    GetCharacterMovement()->GravityScale = OriginalGravityScale;
+    else if (IsCoyoteTime())
+    {
+      GetCharacterMovement()->Velocity.Z = 0.0f;
+    }
+    else
+    {
+      bIsSlidingOnWall = false;
+    }
   }
 }
 
 void ASideScrollerCharacter::NotifyJumpApex()
 {
   Super::NotifyJumpApex();
-  
-  
-}
-
-void ASideScrollerCharacter::Landed(const FHitResult& Hit)
-{
-  Super::Landed(Hit);
-
-  if (bIsDashing)
-  {
-    StopDash();
-  }
-  
-  DashesInAirRemaining = MaxDashesInAir;
 }
 
 void ASideScrollerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
@@ -95,12 +94,29 @@ void ASideScrollerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMod
   {
     if (PrevMovementMode == EMovementMode::MOVE_Walking)
     {
-      GetWorldTimerManager().SetTimer(
-        CoyoteTimer,
-        this,
-        &ASideScrollerCharacter::OnCoyoteTimerEnd,
-        CoyoteTime
-      );
+      if (!bIsDashing)
+      {
+        GetWorldTimerManager().SetTimer(
+          CoyoteTimer,
+          this,
+          &ASideScrollerCharacter::OnCoyoteTimerEnd,
+          CoyoteTime
+        );
+      }
+    }
+  }
+  else if (GetCharacterMovement()->MovementMode == EMovementMode::MOVE_Walking)
+  {
+    if (PrevMovementMode == EMovementMode::MOVE_Falling)
+    {
+      DashesInAirRemaining = MaxDashesInAir;
+      GetCharacterMovement()->GravityScale = OriginalGravityScale;
+
+      if (IsJumpBufferTime())
+      {
+        GetWorld()->GetTimerManager().ClearTimer(JumpBufferTimer);
+        Jump();
+      }
     }
   }
 }
@@ -126,7 +142,7 @@ void ASideScrollerCharacter::Move(float Value)
 
 void ASideScrollerCharacter::StartJumping()
 {
-  if (bIsTouchingWall && GetCharacterMovement()->IsFalling())
+  if (CanWallJump())
   {
     if (bFaceWallJumpDirection)
     {
@@ -135,30 +151,57 @@ void ASideScrollerCharacter::StartJumping()
     
     WallJump();
   }
-  else
+  else if (CanJump())
   {
     Jump();
   }
+  else
+  {
+    GetWorldTimerManager().SetTimer(
+      JumpBufferTimer,
+      this,
+      &ASideScrollerCharacter::OnWallCoyoteTimerEnd,
+      JumpBufferTime
+    );
+  }
+}
+
+bool ASideScrollerCharacter::CanWallJump()
+{
+  return (
+    bIsTouchingWall && 
+    bCanWallJump && 
+    GetCharacterMovement()->IsFalling()
+    ) || IsWallCoyoteTime();
+}
+
+void ASideScrollerCharacter::StopJumping()
+{
+  Super::StopJumping();
+  
+  GetCharacterMovement()->GravityScale = OriginalGravityScale * StopJumpGravityScaleModifier;
 }
 
 void ASideScrollerCharacter::WallJump_Implementation()
 {
-  FVector LaunchBackVelocity = -GetActorForwardVector() * LaunchOffWallVelocity.X;
-  FVector LaunchUpVelocity = GetActorUpVector() * LaunchOffWallVelocity.Z;
-  
-  LaunchCharacter((LaunchBackVelocity + LaunchUpVelocity), true, true);
+  FVector forwardVector = IsWallCoyoteTime() ?
+    GetActorForwardVector() : -GetActorForwardVector();
+
+  bWallJumpRequested = true;
+  GetCharacterMovement()->GravityScale = OriginalGravityScale;
+
+  LaunchCharacter(
+    (forwardVector + GetActorUpVector()) * LaunchOffWallVelocity,
+    true, 
+    true
+  );
 }
 
 bool ASideScrollerCharacter::CanDash() const
 {
-  if (!bIsDashing && GetWorld()->GetTimerManager().GetTimerRemaining(DashCooldownTimer) <= 0.0f)
+  if (!bIsDashing && !IsDashOnCooldown())
   {
-    if (GetCharacterMovement()->IsFalling() && DashesInAirRemaining <= 0)
-    {
-      return false;
-    }
-
-    return true;
+    return !(GetCharacterMovement()->IsFalling() && DashesInAirRemaining <= 0);
   }
 
   return false;
@@ -185,9 +228,6 @@ void ASideScrollerCharacter::BeginPlay()
   Super::BeginPlay();
 
   InitCharacter();
-
-  WallDetectionBox->OnComponentBeginOverlap.AddDynamic(this, &ASideScrollerCharacter::OnJumpableWallTouch);
-  WallDetectionBox->OnComponentEndOverlap.AddDynamic(this, &ASideScrollerCharacter::OnJumpableWallLeave);
 }
 
 void ASideScrollerCharacter::InitCharacter()
@@ -199,17 +239,15 @@ void ASideScrollerCharacter::InitCharacter()
 void ASideScrollerCharacter::Jump()
 {
   GetCharacterMovement()->bNotifyApex = true;
+  GetCharacterMovement()->GravityScale = OriginalGravityScale;
 
   Super::Jump();
 }
 
 bool ASideScrollerCharacter::CanJumpInternal_Implementation() const
 {
-  if (GetWorld()->GetTimerManager().GetTimerRemaining(CoyoteTimer) > 0.0f) {
-    return true;
-  }
-
-  return Super::CanJumpInternal_Implementation();
+  return Super::CanJumpInternal_Implementation() || 
+    (GetCharacterMovement()->Velocity.Z == 0.0f && IsCoyoteTime());
 }
 
 void ASideScrollerCharacter::Dash()
@@ -219,11 +257,7 @@ void ASideScrollerCharacter::Dash()
     FVector Direction = GetActorForwardVector() + GetActorUpVector();
 
     bIsDashing = true;
-
-    if (GetCharacterMovement()->IsFalling())
-    {
-      DashesInAirRemaining--;
-    }
+    DashesInAirRemaining--;
 
     LaunchCharacter(Direction * DashInitialVelocity, true, true);
 
@@ -253,6 +287,10 @@ void ASideScrollerCharacter::OnCoyoteTimerEnd()
 {
 }
 
+void ASideScrollerCharacter::OnWallCoyoteTimerEnd()
+{
+}
+
 void ASideScrollerCharacter::OnDashDurationTimerEnd()
 {
   StopDash();
@@ -262,14 +300,52 @@ void ASideScrollerCharacter::OnDashCooldownTimerEnd()
 {
 }
 
-void ASideScrollerCharacter::OnJumpableWallTouch(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
-  UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+bool ASideScrollerCharacter::IsCoyoteTime() const
 {
-  bIsTouchingWall = true;
+  return GetWorld()->GetTimerManager().GetTimerRemaining(CoyoteTimer) > 0.0f;
 }
 
-void ASideScrollerCharacter::OnJumpableWallLeave(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
-  UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+bool ASideScrollerCharacter::IsWallCoyoteTime() const
 {
-  bIsTouchingWall = false;
+  return GetWorld()->GetTimerManager().GetTimerRemaining(WallCoyoteTimer) > 0.0f;
+}
+
+bool ASideScrollerCharacter::IsJumpBufferTime() const
+{
+  return GetWorld()->GetTimerManager().GetTimerRemaining(JumpBufferTimer) > 0.0f;
+}
+
+bool ASideScrollerCharacter::IsDashOnCooldown() const
+{
+  return GetWorld()->GetTimerManager().GetTimerRemaining(DashCooldownTimer) > 0.0f;
+}
+
+void ASideScrollerCharacter::UpdateIsTouchingWall()
+{
+  bool bPrevIsTouchingWall = bIsTouchingWall;
+
+  FVector boxExtent = WallDetectionBox->GetUnscaledBoxExtent();
+  FVector boxLocation = (GetActorForwardVector() * WallDetectionBox->GetRelativeLocation()) + GetActorLocation();
+  FCollisionShape wallJumpCollisionBox = FCollisionShape::MakeBox(boxExtent);
+
+  FHitResult OutHit;
+
+  bIsTouchingWall = GetWorld()->SweepSingleByChannel(
+    OutHit,
+    boxLocation,
+    boxLocation,
+    GetActorRotation().Quaternion(),
+    ECollisionChannel::ECC_GameTraceChannel1,
+    wallJumpCollisionBox
+  );
+
+  if (!bIsTouchingWall && bPrevIsTouchingWall)
+  {
+    GetWorldTimerManager().SetTimer(
+      WallCoyoteTimer,
+      this,
+      &ASideScrollerCharacter::OnWallCoyoteTimerEnd,
+      WallCoyoteTime
+    );
+  }
 }
