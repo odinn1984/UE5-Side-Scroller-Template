@@ -10,7 +10,8 @@
 			"LoadingPhase": "Default",
 			"AdditionalDependencies": [
 				"Engine",
-				"Paper2D"
+				"Paper2D",
+				"Pixel2D"
 			]
 		}
 	],
@@ -39,6 +40,11 @@
 			"Name": "SMSystem",
 			"Enabled": true,
 			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/content/916643d0c665469594233cb0487e6d3d"
+		},
+		{
+			"Name": "Pixel2D",
+			"Enabled": true,
+			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/content/974da5852e8f433fbbfc4bf4d8ecc77b"
 		}
 	]
 }

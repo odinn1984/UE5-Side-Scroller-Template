@@ -18,7 +18,8 @@ public class TP_SideScroller : ModuleRules
       "Niagara",
       "CinematicCamera",
       "Paper2D",
-			"SMSystem"
+			"SMSystem",
+			"Pixel2D"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

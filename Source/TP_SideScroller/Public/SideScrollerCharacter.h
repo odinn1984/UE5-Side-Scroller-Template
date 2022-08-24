@@ -15,15 +15,19 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 	virtual void NotifyJumpApex() override;
-	virtual void Landed(const FHitResult& Hit) override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(Category = "Character", BlueprintCallable)
 	virtual void Move(float Value);
 
-	UFUNCTION(Category = "Character", BlueprintCallable)
+  UFUNCTION(Category = "Character", BlueprintCallable)
 	virtual void StartJumping();
+
+	UFUNCTION(Category = "Character", BlueprintCallable)
+	virtual bool CanWallJump();
+
+	virtual void StopJumping() override;
 
 	UFUNCTION(Category = "Character", BlueprintCallable, Server, Reliable)
 	virtual void WallJump();
@@ -47,20 +51,25 @@ protected:
 	virtual void StopDash();
 
 	virtual void OnCoyoteTimerEnd();
+	virtual void OnWallCoyoteTimerEnd();
 	virtual void OnDashDurationTimerEnd();
 	virtual void OnDashCooldownTimerEnd();
 
-	UFUNCTION()
-	void OnJumpableWallTouch(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+	bool IsCoyoteTime() const;
+	bool IsWallCoyoteTime() const;
+	bool IsJumpBufferTime() const;
+	bool IsDashOnCooldown() const;
 
-	UFUNCTION()
-	void OnJumpableWallLeave(class UPrimitiveComponent* OverlappedComp, class AActor* OtherActor, class UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+	virtual void UpdateIsTouchingWall();
 
 	UPROPERTY(Category = "Character|Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
-	float FallingGravityScaleModifier = 2.0f;
+	float StopJumpGravityScaleModifier = 2.0f;
 
-	UPROPERTY(Category = "Character|Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
-	float CoyoteTime = 0.3f;
+	UPROPERTY(Category = "Character|Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", ClampMax = "0.3", UIMax = "0.3"))
+	float CoyoteTime = 0.1f;
+
+	UPROPERTY(Category = "Character|Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", ClampMax = "0.3", UIMax = "0.3"))
+  float JumpBufferTime = 0.2f;
 
 	UPROPERTY(Category = "Character|Dash", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
   bool bCanDash = true;
@@ -81,25 +90,19 @@ protected:
   int32 DashesInAirRemaining;
 
 	UPROPERTY(Category = "Character|Dash", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
-  float DashDuration = 0.069f;
+  float DashDuration = 0.1f;
 
 	UPROPERTY(Category = "Character|Dash", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
   float DashCooldown = 0.2f;
 
 	UPROPERTY(Category = "Character|Dash", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
-  FVector DashInitialVelocity = FVector(15000.0f, 0.0f, 350.0f);
+  FVector DashInitialVelocity = FVector(5000.0f, 0.0f, 100.0f);
 
 	UPROPERTY(Category = "Character|Wall Slide/Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
   class UBoxComponent* WallDetectionBox;
 
-	UPROPERTY(Category = "Character|Wall Slide/Jump", BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
-  bool bIsTouchingWall = false;
-
 	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Slide", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
 	bool bCanWallSlide = true;
-
-	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Slide", BlueprintReadWrite, Replicated, meta = (AllowPrivateAccess = "true"))
-  bool bIsSlidingOnWall = false;
 
 	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Slide", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
   float WallSlideZVelocity = 250.0f;
@@ -107,16 +110,24 @@ protected:
 	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
   bool bCanWallJump = true;
 
+	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true", ClampMin = "0.0", UIMin = "0.0", ClampMax = "0.3", UIMax = "0.3"))
+  float WallCoyoteTime = 0.3f;
+
 	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
 	bool bFaceWallJumpDirection = true;
 
 	UPROPERTY(Category = "Character|Wall Slide/Jump|Wall Jump", EditDefaultsOnly, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
-	FVector LaunchOffWallVelocity = FVector(1250.0f, 0.0f, 1500.0f);
+	FVector LaunchOffWallVelocity = FVector(1000.0f, 0.0f, 1250.0f);
+
+	bool bWallJumpRequested = false;
+	bool bIsTouchingWall = false;
+	bool bIsSlidingOnWall = false;
 
 	float OriginalGravityScale = 1.0f;
 
 	FTimerHandle CoyoteTimer;
+	FTimerHandle WallCoyoteTimer;
 	FTimerHandle DashCooldownTimer;
 	FTimerHandle DashDurationTimer;
-
+	FTimerHandle JumpBufferTimer;
 };

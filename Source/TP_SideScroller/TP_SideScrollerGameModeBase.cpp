@@ -4,6 +4,7 @@
 #include "TP_SideScrollerGameModeBase.h"
 #include "SKSideScrollerCharacter.h"
 #include "PaperSideScrollerCharacter.h"
+#include "Pixel2DSideScrollerCharacter.h"
 #include "SideScrollerPlayerController.h"
 
 ATP_SideScrollerGameModeBase::ATP_SideScrollerGameModeBase()
